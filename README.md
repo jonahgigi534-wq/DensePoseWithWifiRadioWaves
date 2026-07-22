@@ -105,6 +105,10 @@ The dev server proxies `/api` and `/ws` to the backend on port 4000.
 - **Lock nodes to a single WiFi channel.** Channel hopping injects fake “motion” and breaks presence.
 - **Start the backend with the room empty** so each node calibrates its quiet baseline correctly.
 
+So why havent I done anything to fix this?
+
+**The truth of the matter is, ESP32s at their core are simply too weak to accurateley determine exact heartrate and breathing rate, the solution to this would be buying expensive equipment dedicated to processing heart rate, breathing rate etc.**
+
 See [`docs/PresenceApp-Technical-Documentation.docx`](docs/) for the full explanation, including the presence algorithm and the multi‑node firmware fix.
 
 ## Credits & attribution
