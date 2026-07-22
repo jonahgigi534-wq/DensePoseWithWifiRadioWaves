@@ -1,4 +1,4 @@
-# PresenceApp: 
+# Presence Detection: 
 WiFi CSI Presence & Motion Sensing
 
 Detect **room occupancy, movement, and rough position using only WiFi signals** — no cameras, no microphones, no wearables. Cheap ESP32‑S3 sensors read the WiFi **Channel State Information (CSI)** already flowing through the room, and a Python + React stack turns it into a live dashboard.
