@@ -1,0 +1,40 @@
+# ---- Secrets (NEVER commit) ----
+nvs_config.csv
+*.env
+.env
+!*.env.example
+secrets.*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+backend/data/
+
+# ---- Node / frontend ----
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# ---- ESP-IDF firmware build artifacts ----
+firmware/build/
+firmware/main/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock
+firmware/.claude-flow/
+firmware/release_bins/
+# (keep firmware/prebuilt/*.bin — those are intentionally checked in)
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
