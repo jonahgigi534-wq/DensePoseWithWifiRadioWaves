@@ -3,9 +3,12 @@ WiFi CSI Presence & Motion Sensing
 
 Detect **room occupancy, movement, and rough position using only WiFi signals** — no cameras, no microphones, no wearables. Cheap ESP32‑S3 sensors read the WiFi **Channel State Information (CSI)** already flowing through the room, and a Python + React stack turns it into a live dashboard.
 
-> **Honest status.** Presence and motion detection work reliably. Position is **zone‑level** (RSSI‑based, ~1–2 m). Breathing and heart rate are **experimental and not reliable on this hardware** — see [Limitations](#limitations-honest).
+
 
 ![PresenceApp live dashboard: online nodes, motion intensity, vital signs, and 3-D room spatial view](docs/dashboard.png)
+
+
+> **Honest status.** Presence and motion detection work reliably. Position is **zone‑level** (RSSI‑based, ~1–2 m). Breathing and heart rate are **experimental and not reliable on this hardware** — see [Limitations](#limitations-honest).
 
 ---
 
