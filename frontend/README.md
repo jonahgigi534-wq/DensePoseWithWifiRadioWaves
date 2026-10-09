@@ -1,16 +1,22 @@
-# React + Vite
+# Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The web dashboard for wifi-csi-presence-sensing, built with React, Vite and Three.js. It shows how many nodes are online, the motion level, the vitals readout, and a 3D view of the room with a marker at the person's estimated position.
 
-Currently, two official plugins are available:
+## Running
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Start the backend first (it runs on port 4000), then:
 
-## React Compiler
+```bash
+npm install
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+and open http://localhost:5173. The Vite dev server forwards `/api` and `/ws` to the backend; see `vite.config.js`.
 
-## Expanding the ESLint configuration
+`npm run build` writes a production build to `dist/`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Where things are
+
+- `src/hooks/useRuView.js`: the WebSocket connection to the backend, message parsing, and position smoothing (a Kalman filter on each axis)
+- `src/components/Room3D.jsx`: the 3D room and the person marker
+- `src/pages/`: the Dashboard, Insights and Training pages

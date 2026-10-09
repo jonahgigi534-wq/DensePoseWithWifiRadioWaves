@@ -1,125 +1,107 @@
-# Presence Detection: 
-WiFi CSI Presence & Motion Sensing
+# wifi-csi-presence-sensing
 
-Detect **room occupancy, movement, and rough position using only WiFi signals** — no cameras, no microphones, no wearables. Cheap ESP32‑S3 sensors read the WiFi **Channel State Information (CSI)** already flowing through the room, and a Python + React stack turns it into a live dashboard.
+Room presence detection using WiFi. ESP32-S3 boards read the Channel State Information (CSI) from an ordinary 2.4 GHz router, a Python backend works out whether someone is in the room and roughly where, and a React dashboard shows it live. No cameras or wearables.
 
+![Dashboard with two nodes online, the motion level, the vitals readout and the 3D room view](docs/dashboard.png)
 
+Presence and motion detection work well. Position is rough (about 1-2 m), so it tells you which part of the room someone is in, not exactly where they're standing. The breathing and heart rate shown on the dashboard aren't reliable on this hardware; see [Limitations](#limitations).
 
-![PresenceApp live dashboard: online nodes, motion intensity, vital signs, and 3-D room spatial view](docs/dashboard.png)
+This project doesn't do pose estimation. The figure in the 3D view is a marker drawn at the estimated position, not a tracked body.
 
+## What it can do
 
-> **Honest status.** Presence and motion detection work reliably. Position is **zone‑level** (RSSI‑based, ~1–2 m). Breathing and heart rate are **experimental and not reliable on this hardware** — see [Limitations](#limitations-honest).
-
----
-
-## What it does
-
-| Capability | Status |
+| Feature | Status |
 |---|---|
-| Presence (occupied vs empty) | Reliable |
-| Motion / activity level |  Reliable |
-| Rough position of a person | Zone‑level (RSSI trilateration) |
+| Presence (is anyone in the room) | Works |
+| Motion level | Works |
+| Position | Rough, zone level |
 | Breathing rate | Experimental |
-| Heart rate | Not reliable on this hardware (weak signal capture on the ESP32s) |
+| Heart rate | Not reliable (weak signal capture on the ESP32s) |
 
 ## How it works
 
 ```
-WiFi router  →  ESP32-S3 node(s)  →  UDP packets  →  Python backend (csi_bridge.py)
-                 (reads CSI)          on your LAN       presence + position + motion
-                                                              │
-                                            WebSocket  ───────┘
-                                                              ▼
-                                              React dashboard (3-D room view)
+WiFi router -> ESP32-S3 nodes -> UDP -> Python backend -> WebSocket -> React dashboard
 ```
 
-- **Presence** is decided from **per‑subcarrier, AGC‑normalized CSI amplitude variance** measured against an adaptive per‑node baseline (this is what makes empty‑vs‑occupied separate cleanly).
-- **Position** comes from **RSSI** run through a log‑distance path‑loss model and combined across nodes by **trilateration** (circle‑intersection / weighted centroid).
-- A deep technical + plain‑language write‑up is in [`docs/`](docs/).
+Each ESP32 listens to the router's WiFi traffic and sends the CSI, the amplitude and phase of each WiFi subcarrier, to the backend over UDP.
 
-## Repository structure
+For presence, the backend divides each CSI frame by its own average amplitude to cancel out the ESP32's automatic gain control, then measures how much each subcarrier changes over a few seconds. When that rises well above the empty-room level, which is learned separately for each node, the room counts as occupied. In testing this clearly separated someone sitting still from an empty room, which the first approach (averaging all the subcarriers together) couldn't do at all.
+
+For position, each node's signal strength (RSSI) is turned into a rough distance with a path-loss model, and the distances from all the nodes are combined by trilateration.
+
+[docs/RESEARCH.md](docs/RESEARCH.md) covers how this was worked out, including the approaches that didn't work.
+
+## Repository layout
 
 ```
-presence-wifi-sensing/
-├── backend/          FastAPI signal-processing bridge (the "brain")
-│   └── csi_bridge.py   CSI decoding, presence detection, trilateration, WebSocket
-├── frontend/         Vite + React + Three.js dashboard (3-D room, status)
-│   └── src/hooks/useRuView.js   WebSocket client + Kalman smoothing
-├── firmware/         ESP32-S3 CSI node firmware (ESP-IDF), rewritten for multi-node
-│   ├── main/           C sources (dual-core CSI capture + DSP pipeline)
-│   ├── provision.py    Flash Wi-Fi credentials + target IP into a node
-│   └── prebuilt/       Ready-to-flash .bin images
-└── docs/             RESEARCH.md + full technical documentation (.docx)
+wifi-csi-presence-sensing/
+├── backend/    FastAPI server: CSI decoding, presence detection, position, WebSocket
+├── frontend/   Vite + React + Three.js dashboard
+├── firmware/   ESP32 CSI node firmware (RuView v0.7.0) and prebuilt images
+└── docs/       Research notes, technical write-up, dashboard screenshot
 ```
 
 ## Hardware
 
-| Part | Notes |
-|---|---|
-| ESP32‑S3 (8 MB flash) | 1 for presence; 2–3 for position. Must be **S3** (dual‑core). |
-| 2.4 GHz WiFi router | The transmitter that is sensed (ESP32 CSI is 2.4 GHz only). |
-| Host PC | Runs the backend + serves the dashboard. |
+- One or more ESP32-S3 boards with 8 MB of flash (about $9 each). One is enough for presence; position needs two or three. It has to be an S3, because the firmware uses both of its cores.
+- A 2.4 GHz WiFi router. The ESP32 only reads CSI on 2.4 GHz.
+- A PC on the same network to run the backend and the dashboard.
 
 ## Setup
 
-### 1. Firmware (ESP32‑S3)
+```bash
+git clone https://github.com/jonahgigi534-wq/wifi-csi-presence-sensing.git
+cd wifi-csi-presence-sensing
+```
 
-Requires **ESP‑IDF v5.4**. From `firmware/`:
+### 1. Firmware
+
+Flash the prebuilt images in `firmware/prebuilt/` (or build from source), then give each board your WiFi details and your PC's address:
 
 ```bash
-# Build
-idf.py build
-
-# Flash (replace COM7 with your port; use /dev/ttyUSB0 on Linux)
-idf.py -p COM7 flash
-
-# Provision Wi-Fi + where to send data (your PC's LAN IP)
-python provision.py --port COM7 \
-  --ssid "YourWiFi" --password "YourPassword" \
+cd firmware
+python provision.py --port COM7 --ssid "YourWiFi" --password "YourPassword" \
   --target-ip 192.168.1.20 --node-id 1
 ```
 
-Or skip the build and flash the images in `firmware/prebuilt/` directly with `esptool`. For a second node, repeat with `--node-id 2`, etc.
+Use `--node-id 2`, `3` and so on for the other boards. [firmware/README.md](firmware/README.md) has the flash command and the build steps.
 
-### 2. Backend (Python)
+### 2. Backend
 
 ```bash
 cd backend
 pip install -r requirements.txt
-python main.py          # FastAPI + WebSocket on http://localhost:4000
+python main.py
 ```
 
-Set your node positions (room coordinates) in `NODE_POSITIONS` at the top of `csi_bridge.py`.
+It serves the API and WebSocket on port 4000 and listens for the ESP32s on UDP port 5005. Set where your nodes are in the room (in metres) in `NODE_POSITIONS` at the top of `csi_bridge.py`. Start it with the room empty, because each node learns its empty-room baseline from the first few seconds.
 
-### 3. Frontend (React)
+### 3. Dashboard
 
 ```bash
 cd frontend
 npm install
-npm run dev             # dashboard at http://localhost:5173
+npm run dev
 ```
 
-The dev server proxies `/api` and `/ws` to the backend on port 4000.
+Then open http://localhost:5173.
 
-## Limitations (honest)
+## Limitations
 
-- **Vital signs are unreliable on this hardware.** WiFi CSI amplitude can’t cleanly recover the sub‑millimeter chest motion of a heartbeat; the firmware’s breathing/heart output is effectively noise (it reports values even in an empty room). **Breathing** can be made usable with phase‑based processing for a *still* person; **heart rate** realistically needs a 60 GHz mmWave sensor fused in.
-- **Position is zone‑level.** RSSI ranging is coarse (~1–2 m) and jittery. Precise tracking would need multi‑antenna CSI phase (angle‑of‑arrival), which the ESP32 doesn’t expose cleanly.
-- **Only CSI amplitude is used, not phase.** The ESP32’s phase is corrupted (CFO/STO/SFO). Recovering clean phase is the single biggest upgrade path.
-- **Node placement matters a lot.** A person is detected best when their body is between a node and the router. Poorly placed nodes contribute little.
-- **Lock nodes to a single WiFi channel.** Channel hopping injects fake “motion” and breaks presence.
-- **Start the backend with the room empty** so each node calibrates its quiet baseline correctly.
+- Breathing and heart rate aren't reliable. WiFi CSI amplitude can't pick up the chest movement from a heartbeat, which is under a millimetre, and the firmware's breathing and heart rate numbers are mostly noise: they still show values with nobody in the room. Breathing might be workable for someone sitting still with phase-based processing. Heart rate needs different hardware, such as a 60 GHz mmWave radar.
+- Position is rough. RSSI only gives an approximate distance (about 1-2 m) and it jumps around. A precise position would need CSI phase from boards with several antennas, which the ESP32 doesn't provide.
+- Only CSI amplitude is used. The ESP32's phase readings are corrupted by frequency and timing offsets, so the backend ignores them for now.
+- Placement matters. A person is easiest to detect when they're between a node and the router, and a badly placed node adds very little.
+- Keep the nodes on one channel. If they hop between WiFi channels, the hopping looks like movement and causes false presence.
+- The room sometimes flips back to occupied a few seconds after someone leaves. Channel hopping, or something moving near a node such as a fan, are the likely causes.
 
-So why havent I done anything to fix this?
+So why haven't I done anything to fix this? The truth of the matter is, ESP32s at their core are simply too weak to accurately determine exact heart rate and breathing rate. The solution to this would be buying expensive equipment dedicated to processing heart rate, breathing rate, etc.
 
-**The truth of the matter is, ESP32s at their core are simply too weak to accurateley determine exact heartrate and breathing rate, the solution to this would be buying expensive equipment dedicated to processing heart rate, breathing rate etc.**
+## Credits
 
-See [`docs/PresenceApp-Technical-Documentation.docx`](docs/) for the full explanation, including the presence algorithm and the multi‑node firmware fix.
-
-## Credits & attribution
-
-The ESP32 firmware in `firmware/` is **derived from the open‑source [RuView](https://github.com/ruvnet/RuView) project (MIT licensed)**. The original firmware contained a node‑ID corruption bug that collapsed all sensors into one, making multi‑node operation impossible; the node‑identity handling was rewritten so multiple nodes can be distinguished — a prerequisite for position estimation. The `backend/` and `frontend/` (PresenceApp) are original work built on top of that firmware.
+The firmware is [RuView](https://github.com/ruvnet/RuView)'s ESP32 CSI node firmware (MIT), included unchanged. I started on an older RuView build that only let data from one node through. Version 0.7.0 fixes a bug where starting WiFi overwrote each board's node ID, so that's the version used here; [firmware/README.md](firmware/README.md) has the details. The backend and dashboard were written for this project.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
