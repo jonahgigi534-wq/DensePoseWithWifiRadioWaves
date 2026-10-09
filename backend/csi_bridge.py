@@ -1,12 +1,15 @@
 """
-CSI Bridge: Connects to RuView sensing server (port 3000), transforms data into a
-consistent 'sensing_update' format, and broadcasts to frontend WebSocket clients.
+CSI bridge: turns ESP32 CSI data into 'sensing_update' messages and broadcasts
+them to the dashboard's WebSocket clients.
 
-Handles:
-  - RuView v1 WebSocket (pose_data messages)
-  - RuView v2 WebSocket (HA-style event messages)
-  - REST polling fallback
-  - RSSI-based position trilateration from multi-node data
+Data sources:
+  - UDP packets sent straight from the ESP32 firmware (raw CSI, vitals and
+    feature vectors). This is the main path; presence is decided from the raw
+    CSI frames.
+  - A RuView sensing server on port 3000, if one is running: v1 and v2
+    (Home Assistant-style) WebSocket messages, with REST polling as a fallback.
+
+Position is estimated from each node's RSSI by trilateration.
 """
 import asyncio
 import json
@@ -102,16 +105,10 @@ class NodeState:
         self.person_count: int = 0
         self.presence_score: float = 0.0
         self.last_update: float = 0.0
-        self.vitals_last_valid: float = 0.0   # time of last vitals packet (CSI defers while fresh)
-        self.last_occupied_ts: float = 0.0    # last time occupancy evidence was seen
 
     @property
     def is_active(self) -> bool:
         return time.time() - self.last_update < 10.0
-
-    @property
-    def vitals_are_fresh(self) -> bool:
-        return time.time() - self.vitals_last_valid < 10.0
 
     def to_dict(self) -> dict:
         return {
@@ -136,7 +133,6 @@ class CSIBridge:
         # Local recording state (used when RuView server is unavailable)
         self._recording_scenario: Optional[str] = None
         self._recording_snapshots: List[dict] = []
-        _POS_ALPHA = 0.07
 
     def start_local_recording(self, scenario_id: str):
         self._recording_scenario = scenario_id
@@ -197,7 +193,7 @@ class CSIBridge:
 
     # ---------------------------------------------- sensing_update construction
 
-    _POS_ALPHA = 0.15   # EMA alpha for position — 0.07 was ~2.7s lag at 5 Hz
+    _POS_ALPHA = 0.15   # EMA weight for new positions; higher follows movement faster
 
     def _smooth_position(self, pid: str, raw: list) -> list:
         """Exponential moving average on position — absorbs RSSI noise."""
@@ -238,12 +234,11 @@ class CSIBridge:
 
         breathing, heart = self._valid_vitals(raw_br, raw_hr)
 
-        # EMA smoothing: update when present + valid reading.
-        # When present but one metric is temporarily invalid (brief noise spike),
-        # HOLD the existing smoothed value rather than resetting to 0 — resetting
-        # causes the EMA to ramp from zero on the next good packet, producing
-        # the "wildly inaccurate" swings the user observed.
-        # Only zero out when presence itself is lost (person left room).
+        # Smooth the vitals with an EMA. While someone is present, a reading
+        # that's briefly out of range keeps the previous value instead of
+        # resetting to 0; resetting would make the next good reading ramp up
+        # from zero and swing wildly. Values are only cleared once presence
+        # is lost.
         a = self._VITALS_EMA
         if is_present:
             if breathing > 0:
@@ -636,7 +631,7 @@ class CSIBridge:
             iq_bytes = data[20:]
             n_samples = min(len(iq_bytes) // 2, num_sub * num_antennas)
 
-            # Per-subcarrier amplitude for THIS frame
+            # Amplitude of each subcarrier in this frame
             amps = []
             for i in range(n_samples):
                 I = struct.unpack_from("b", iq_bytes, i * 2)[0]
@@ -646,12 +641,11 @@ class CSIBridge:
             if not amps:
                 return
 
-            # Normalize the frame by its own mean amplitude. ESP32 AGC rescales
-            # the whole frame packet-to-packet for reasons unrelated to people;
-            # dividing by the frame mean removes that gain noise and leaves the
-            # SHAPE of the channel across subcarriers — which is what a body
-            # perturbs. (The old code tracked the cross-subcarrier MEAN, which
-            # averaged the signal away and measured only AGC noise.)
+            # Divide by the frame's mean amplitude. The ESP32's automatic gain
+            # control rescales whole frames from packet to packet for reasons
+            # unrelated to people; normalizing removes that and keeps the shape
+            # of the channel across subcarriers, which is what a body changes.
+            # Averaging the subcarriers together instead would hide the signal.
             fmean = sum(amps) / len(amps)
             if fmean <= 0:
                 return
@@ -689,9 +683,10 @@ class CSIBridge:
                 self.nodes[node_id] = NodeState(node_id)
             n = self.nodes[node_id]
 
-            # Per-node adaptive empty-room baseline. Falls FAST and rises SLOW so
-            # it settles on each node's own quiet floor and isn't inflated by a
-            # present person; after a person leaves it re-settles within ~1-2 s.
+            # Per-node empty-room baseline. It falls quickly and rises slowly,
+            # so it settles at the node's quiet level and someone in the room
+            # only pulls it up gradually. Once the metric drops after the room
+            # empties, it re-settles within a second or two.
             if n.std_baseline <= 0:
                 n.std_baseline = metric
             elif metric < n.std_baseline:
@@ -699,8 +694,8 @@ class CSIBridge:
             else:
                 n.std_baseline += 0.002 * (metric - n.std_baseline)  # rise slow
 
-            # Present when the channel rises well above THIS node's floor AND
-            # above an absolute minimum (backstop if the baseline collapses).
+            # Present when the metric is well above this node's baseline and
+            # above an absolute minimum (in case the baseline drifts toward 0).
             thresh = max(n.std_baseline * self._PRESENCE_BASELINE_K, self._PRESENCE_ABS_FLOOR)
             is_present = metric > thresh
             motion_energy = min(metric / max(thresh, 1e-3), 3.0)
@@ -716,10 +711,8 @@ class CSIBridge:
                 print(f"[CSI] node={node_id} sc={L} p90={metric:.4f} "
                       f"baseline={n.std_baseline:.4f} thresh={thresh:.4f} present={is_present}")
 
-            # ALWAYS track whether the channel is disturbed (motion), with
-            # hysteresis. This is the gate the vitals handler uses to clear
-            # presence on an empty room — so it must update even while the
-            # firmware is streaming vitals packets.
+            # Debounce: the motion state only changes after
+            # _PRESENCE_HYSTERESIS consecutive frames agree.
             if not hasattr(n, '_motion_streak'):
                 n._motion_streak = 0
             if is_present == n.motion_present:
@@ -730,16 +723,15 @@ class CSIBridge:
                     n.motion_present = is_present
                     n._motion_streak = 0
 
-            # CSI motion is the SOLE source of presence. The firmware presence
-            # flag and firmware vitals are unreliable here (proven: they read
-            # the same whether the room is occupied or empty), so they do NOT
-            # influence presence.
+            # Presence comes only from this CSI check. The firmware's presence
+            # flag and vitals read the same whether the room is occupied or
+            # empty, so they're ignored here.
             n.presence = n.motion_present
             n.presence_score = (min(metric / (thresh * 2), 1.0)
                                 if n.motion_present else 0.0)
 
-            # Rate-limit CSI frame broadcasts to 5 Hz — vitals packets
-            # broadcast immediately and are the authoritative source.
+            # Limit broadcasts triggered by CSI frames to 5 Hz. Vitals and
+            # feature packets are broadcast as they arrive.
             now = time.time()
             if now - self._last_csi_broadcast >= 0.2:
                 self._last_csi_broadcast = now
@@ -784,10 +776,9 @@ class CSIBridge:
                 self.nodes[node_id] = NodeState(node_id)
             n = self.nodes[node_id]
 
-            # Presence is owned ENTIRELY by the CSI motion detector — NOT here.
-            # The firmware presence flag and these vitals are unreliable (they
-            # read the same empty or occupied), so this handler only carries the
-            # breathing/heart values forward for display while CSI says present.
+            # Presence is decided in _handle_csi_frame, not here. This packet
+            # updates the node's RSSI and the breathing and heart values that
+            # are shown while someone is present.
             now = time.time()
             if self._recording_scenario:
                 self._recording_snapshots.append({

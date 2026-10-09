@@ -56,7 +56,7 @@ function parseSensingUpdate(payload) {
     };
   }
 
-  // RuView v1 format: pose_data
+  // Messages from a RuView sensing server (v1 format)
   if (payload.type === 'pose_data') {
     const data = payload.data ?? {};
     const persons = (data.persons ?? []).map((p, i) => {
@@ -117,8 +117,8 @@ function computeMotion(person) {
 // Hook
 // ---------------------------------------------------------------------------
 const RECONNECT_MS = 3000;
-const VITALS_HOLD_MS = 1000;   // 4000 → 1000: backend EMA already smooths; don't lag
-const PRESENCE_HOLD_MS = 800;  // 2000 → 800: tighter — clears person faster on exit
+const VITALS_HOLD_MS = 1000;   // keep the last vitals on screen this long after they drop out
+const PRESENCE_HOLD_MS = 800;  // keep showing the person this long after the last occupied frame
 
 export function useRuView() {
   const [data, setData] = useState({

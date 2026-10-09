@@ -5,8 +5,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // All API and WebSocket traffic goes through our FastAPI backend (port 4000).
-      // The backend bridges to the RuView sensing server and normalises the format.
+      // All API and WebSocket traffic goes to the FastAPI backend on port 4000,
+      // which receives the ESP32 data and converts it into one message format.
       '/api': {
         target: 'http://localhost:4000',
         changeOrigin: true,

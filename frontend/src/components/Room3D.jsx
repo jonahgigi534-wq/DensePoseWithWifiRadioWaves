@@ -62,8 +62,8 @@ function HumanFigure({ person }) {
     }
   });
 
-  // Skeleton keypoints in local Y-up space (height ≈ 1.7 units)
-  // All positions are [x, y, z] relative to feet (y=0 is floor)
+  // Joint positions for the person marker, a fixed standing figure about
+  // 1.7 units tall (Y up). Each is [x, y, z] relative to the feet (y=0 is the floor).
   const p = {
     head:      [0,    1.60, 0],
     neck:      [0,    1.43, 0],
@@ -83,7 +83,9 @@ function HumanFigure({ person }) {
     rAnkle:    [0.16,  0.08, 0],
   };
 
-  // If keypoints available from API, override default positions
+  // Use keypoints instead if the data source sends them. A RuView server can;
+  // the direct ESP32 path never does, so the marker normally keeps the default
+  // positions above.
   const kps = person.keypoints;
   if (kps && kps.length > 0) {
     const kpMap = {};
@@ -273,7 +275,8 @@ const DEFAULT_NODE_POSITIONS = [
 ];
 
 export default function Room3D({ data, nodes }) {
-  // Snap each person to their zone centre — honest about position accuracy
+  // Snap each person to the centre of their zone, since the position is only
+  // accurate to about a zone
   const snappedPeople = (data.people || []).map(p => {
     const raw = p.position || [0, 0.5, 0];
     const zoneCenter = getZoneCenter(raw[0], raw[2]);
