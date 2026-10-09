@@ -1,31 +1,48 @@
-# Remove MSYS environment variables that trigger ESP-IDF's MinGW rejection
-Remove-Item env:MSYSTEM -ErrorAction SilentlyContinue
-Remove-Item env:MSYSTEM_CARCH -ErrorAction SilentlyContinue
-Remove-Item env:MSYSTEM_CHOST -ErrorAction SilentlyContinue
-Remove-Item env:MSYSTEM_PREFIX -ErrorAction SilentlyContinue
-Remove-Item env:MINGW_CHOST -ErrorAction SilentlyContinue
-Remove-Item env:MINGW_PACKAGE_PREFIX -ErrorAction SilentlyContinue
-Remove-Item env:MINGW_PREFIX -ErrorAction SilentlyContinue
+# Builds the ESP32-S3 firmware with ESP-IDF, and optionally flashes it.
+#
+# Load the ESP-IDF environment first (the "ESP-IDF PowerShell" shortcut, or
+# export.ps1 from your ESP-IDF install), then:
+#   .\build_firmware.ps1              build only
+#   .\build_firmware.ps1 -Port COM7   build, then flash to COM7
+param(
+    [string]$Port
+)
 
-$env:IDF_PATH = "C:\Users\ruv\esp\v5.4\esp-idf"
-$env:IDF_TOOLS_PATH = "C:\Espressif\tools"
-$env:IDF_PYTHON_ENV_PATH = "C:\Espressif\tools\python\v5.4\venv"
-$env:PATH = "C:\Espressif\tools\xtensa-esp-elf\esp-14.2.0_20241119\xtensa-esp-elf\bin;C:\Espressif\tools\cmake\3.30.2\cmake-3.30.2-windows-x86_64\bin;C:\Espressif\tools\ninja\1.12.1;C:\Espressif\tools\ccache\4.10.2\ccache-4.10.2-windows-x86_64;C:\Espressif\tools\idf-exe\1.0.3;C:\Espressif\tools\python\v5.4\venv\Scripts;$env:PATH"
-
-Set-Location "C:\Users\ruv\Projects\wifi-densepose\firmware\esp32-csi-node"
-
-$python = "$env:IDF_PYTHON_ENV_PATH\Scripts\python.exe"
-$idf = "$env:IDF_PATH\tools\idf.py"
-
-Write-Host "=== Cleaning stale build cache ==="
-& $python $idf fullclean
-
-Write-Host "=== Building firmware (SSID=ruv.net, target=192.168.1.20:5005) ==="
-& $python $idf build
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "=== Build succeeded! Flashing to COM7 ==="
-    & $python $idf -p COM7 flash
-} else {
-    Write-Host "=== Build failed with exit code $LASTEXITCODE ==="
+if (-not $env:IDF_PATH) {
+    Write-Error "IDF_PATH is not set. Load the ESP-IDF environment (export.ps1) first."
+    exit 1
 }
+
+# idf.py quits if it sees MSYS/MinGW variables, which are set when PowerShell
+# is started from Git Bash. Clear them for this process only.
+$msysVars = "MSYSTEM", "MSYSTEM_CARCH", "MSYSTEM_CHOST", "MSYSTEM_PREFIX",
+            "MINGW_CHOST", "MINGW_PACKAGE_PREFIX", "MINGW_PREFIX"
+foreach ($name in $msysVars) {
+    Remove-Item "env:$name" -ErrorAction SilentlyContinue
+}
+
+$python = "python"
+if ($env:IDF_PYTHON_ENV_PATH) {
+    $python = Join-Path $env:IDF_PYTHON_ENV_PATH "Scripts\python.exe"
+}
+$idf = Join-Path $env:IDF_PATH "tools\idf.py"
+
+# Start as a failure so that if Python can't be launched at all, the script
+# doesn't report success. The idf.py calls overwrite it with their exit code.
+$code = 1
+Push-Location $PSScriptRoot
+try {
+    & $python $idf build
+    $code = $LASTEXITCODE
+    if ($code -eq 0 -and $Port) {
+        & $python $idf -p $Port flash
+        $code = $LASTEXITCODE
+    }
+} finally {
+    Pop-Location
+}
+
+if ($code -ne 0) {
+    Write-Error "idf.py failed with exit code $code."
+}
+exit $code

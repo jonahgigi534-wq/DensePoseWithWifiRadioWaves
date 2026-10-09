@@ -1,9 +1,22 @@
 @echo off
-echo STARTING > C:\Users\ruv\idf_test.txt
-set IDF_PATH=C:\Users\ruv\esp\v5.4\esp-idf
-set PATH=C:\Espressif\tools\python\v5.4\venv\Scripts;C:\Espressif\tools\xtensa-esp-elf\esp-14.2.0_20241119\xtensa-esp-elf\bin;C:\Espressif\tools\cmake\3.30.2\bin;C:\Espressif\tools\ninja\1.12.1;C:\Espressif\tools\idf-exe\1.0.3;%PATH%
-echo PATH_SET >> C:\Users\ruv\idf_test.txt
-cd /d C:\Users\ruv\Projects\wifi-densepose\firmware\esp32-csi-node
-echo CD_DONE >> C:\Users\ruv\idf_test.txt
-python %IDF_PATH%\tools\idf.py build >> C:\Users\ruv\idf_test.txt 2>&1
-echo RC=%ERRORLEVEL% >> C:\Users\ruv\idf_test.txt
+rem Builds the ESP32-S3 firmware with ESP-IDF, and optionally flashes it.
+rem Run it from the "ESP-IDF Command Prompt" shortcut so IDF_PATH and the
+rem ESP-IDF Python are set up.
+rem   build_firmware.bat          build only
+rem   build_firmware.bat COM7     build, then flash to COM7
+setlocal
+
+if "%IDF_PATH%"=="" (
+    echo IDF_PATH is not set. Open the ESP-IDF Command Prompt first.
+    exit /b 1
+)
+
+pushd "%~dp0"
+python "%IDF_PATH%\tools\idf.py" build
+if not "%ERRORLEVEL%"=="0" goto done
+if not "%~1"=="" python "%IDF_PATH%\tools\idf.py" -p "%~1" flash
+
+:done
+set RC=%ERRORLEVEL%
+popd
+exit /b %RC%

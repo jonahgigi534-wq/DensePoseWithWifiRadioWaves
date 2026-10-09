@@ -1,0 +1,2 @@
+# cmd.exe batch files need CRLF line endings to parse labels reliably
+*.bat text eol=crlf
